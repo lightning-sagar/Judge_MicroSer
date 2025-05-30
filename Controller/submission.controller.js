@@ -13,7 +13,7 @@ const run = async (req, res) => {
   const { file } = req;
   const { ques_name, timeout, sizeout,input,output,language } = req.body;
 
-  if (!file || !ques_name) {
+  if (!file || !ques_name ) {
     return res.status(404).json({ error: 'All fields are required' });
   }
 
@@ -40,7 +40,7 @@ const run = async (req, res) => {
       input,
       expected_output: outputParts[i],
       correct: null,
-      timeout,
+      timeout:timeout || 2.5,
       sizeout,
       result: null
     }));
@@ -48,11 +48,15 @@ const run = async (req, res) => {
     const workerCount = worker_running.length;
     const workerTaskMap = {};
 
-    testcases.forEach((tc, i) => {
-      const workerId = `worker_${i % workerCount}`;
-      if (!workerTaskMap[workerId]) workerTaskMap[workerId] = [];
-      workerTaskMap[workerId].push(tc);
-    });
+    if (testcases.length < 3) {
+      workerTaskMap['worker_0'] = testcases;
+    } else {
+      testcases.forEach((tc, i) => {
+        const workerId = `worker_${i % workerCount}`;
+        if (!workerTaskMap[workerId]) workerTaskMap[workerId] = [];
+        workerTaskMap[workerId].push(tc);
+      });
+    }
 
     const redisPayload = {
       code,

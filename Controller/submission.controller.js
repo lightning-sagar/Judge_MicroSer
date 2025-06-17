@@ -1,40 +1,50 @@
+import fs from 'fs';
+// import path from 'path';
 import { connectredis } from '../db/redis/redis.js';
+// import { fileURLToPath } from 'url';
 
 const redis = await connectredis();
 
-const worker_running = [
-  'https://workers-judge.onrender.com/',
-  'https://workers-judge-1.onrender.com/',
-  'https://workers-judge-2.onrender.com/'
-];
+const worker_running = ['https://workers-judge.onrender.com/', 'https://workers-judge-1.onrender.com/', 'https://workers-judge-2.onrender.com/'];
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
 
 const run = async (req, res) => {
-  const { ques_name, timeout, sizeout, input, output, language, code } = req.body;
+  const { file } = req;
+  const { ques_name, timeout, sizeout,input,output,language } = req.body;
 
-  if (!code || !ques_name || !input || !output || !language) {
-    return res.status(400).json({ error: 'All fields are required.' });
+  if (!file || !ques_name ) {
+    return res.status(404).json({ error: 'All fields are required' });
   }
 
   try {
-    // ✅ Basic security check for dangerous C/C++ functions
+    const input_read = input
+    const output_read = output
+    const code = fs.readFileSync(file.path, 'utf-8');
+
     if (code.includes("fopen") || code.includes("system") || code.includes("fork")) {
-      throw new Error("Potentially dangerous code detected.");
+        throw new Error("Potentially dangerous code detected.");
     }
 
-    // ✅ Parse input/output testcases
-    const inputParts = input.split('###').map(x => x.trim()).filter(Boolean);
-    const outputParts = output.split('###').map(x => x.trim()).filter(Boolean);
+    const inputParts = input_read
+      .split('###')
+      .map(part => part.trim())
+      .filter(part => part.length > 0);
+
+    const outputParts = output_read
+      .split('###')
+      .map(part => part.trim())
+      .filter(part => part.length > 0);
 
     const testcases = inputParts.map((input, i) => ({
       input,
-      expected_output: outputParts[i] || '',
+      expected_output: outputParts[i],
       correct: null,
-      timeout: timeout || "2.5",
+      timeout:timeout || 2.5,
       sizeout,
-      result: null,
+      result: null
     }));
 
-    // ✅ Assign testcases to workers
     const workerCount = worker_running.length;
     const workerTaskMap = {};
 
@@ -48,7 +58,6 @@ const run = async (req, res) => {
       });
     }
 
-    // ✅ Redis payload
     const redisPayload = {
       code,
       language,
@@ -58,17 +67,19 @@ const run = async (req, res) => {
     };
 
     await redis.hSet(ques_name, redisPayload);
-
     const assignedWorkers = Object.keys(workerTaskMap);
 
     await Promise.all(
-      assignedWorkers.map(() => redis.lPush('job_queue', ques_name))
+        assignedWorkers.map(() => redis.lPush('job_queue', ques_name))
     );
 
-    // ✅ Poll for completion
+
+    fs.unlinkSync(file.path);
+
+
     const waitUntilCompleted = async () => {
       const POLL_INTERVAL = 500;
-      const MAX_ATTEMPTS = 60;
+      const MAX_ATTEMPTS = 60;  
       let attempts = 0;
 
       while (attempts < MAX_ATTEMPTS) {
@@ -90,12 +101,13 @@ const run = async (req, res) => {
     if (!completed) {
       return res.status(504).json({ error: 'Timeout waiting for workers to finish' });
     }
-
-    // ✅ Collect all results
+    console.log(`job:${ques_name}`)
     const results = [];
     for (const workerId of assignedWorkers) {
       const data = await redis.get(`job:${ques_name}:worker:${workerId}`);
-      if (data) results.push(...JSON.parse(data));
+      if (data) {
+        results.push(...JSON.parse(data));
+      }
     }
 
     return res.json({
@@ -108,6 +120,6 @@ const run = async (req, res) => {
     console.error("Error in /run:", error);
     res.status(500).json({ error: 'Internal server error' });
   }
-};
+}
 
-export { run };
+export {run}; 
